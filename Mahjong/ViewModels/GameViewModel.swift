@@ -1,0 +1,615 @@
+import SwiftUI
+import Combine
+import UIKit
+
+// MARK: - Hint model
+
+struct HintResult {
+    enum Kind {
+        case freePair
+        case blockerPath
+    }
+    let kind: Kind
+    let matchTileA: UUID
+    let matchTileB: UUID
+    var blockerTileID: UUID? = nil
+}
+
+enum HintRole {
+    case matchA
+    case matchB
+    case blocker
+}
+
+enum UndoAction {
+    case boardMatch(Tile, Tile, scoreAdded: Int)
+    case shelfSend(Tile)
+    case shelfMatch(Tile, Tile, scoreAdded: Int)
+}
+
+// MARK: -
+
+struct BoardBounds {
+    let minCol: Int
+    let minRow: Int
+    let maxCol: Int
+    let maxRow: Int
+}
+
+@MainActor
+final class GameViewModel: ObservableObject {
+    @Published var tiles: [Tile] = []
+    @Published var score: Int = 0
+    @Published var moves: Int = 0
+    @Published var elapsedSeconds: Int = 0
+    @Published var hintsRemaining: Int = 3
+    @Published var undosRemaining: Int = 5
+    @Published var isGameOver: Bool = false
+    @Published var isVictory: Bool = false
+    @Published var currentHint: HintResult? = nil
+    @Published var isPaused: Bool = false
+    @Published var currentLevel: Int
+    @Published var showDeadlockAlert: Bool = false
+    @Published var selectedTileID: UUID? = nil
+    @Published var matchesAvailable: Int = 0
+    @Published var comboCount: Int = 0
+    @Published var isShelfModeEnabled: Bool = false
+    @Published var shelfVM: ShelfViewModel? = nil
+    @Published var boardBounds: BoardBounds? = nil
+
+    private var timer: AnyCancellable?
+    private var hintTask: Task<Void, Never>?
+    private var streakCount: Int = 0
+    private var undoHistory: [UndoAction] = []
+    private var lastMatchDate: Date? = nil
+
+    init(level: Int) {
+        self.currentLevel = level
+        HapticService.prepare()
+        newGame(level: level)
+    }
+
+    // MARK: - New Game
+
+    func newGame(level: Int) {
+        currentLevel = level
+        tiles = []
+        boardBounds = nil
+        score = 0
+        moves = 0
+        elapsedSeconds = 0
+        hintsRemaining = 3
+        undosRemaining = 5
+        isGameOver = false
+        isVictory = false
+        streakCount = 0
+        hintTask?.cancel()
+        hintTask = nil
+        currentHint = nil
+        showDeadlockAlert = false
+        selectedTileID = nil
+        matchesAvailable = 0
+        comboCount = 0
+        undoHistory = []
+        lastMatchDate = nil
+        shelfVM?.reset()
+        PersistenceService.shared.clearGame()
+        PersistenceService.shared.lastPlayedLevel = level
+        
+        HapticService.prepare()
+
+        // Capture the positions (value type) on the main actor, then generate off-thread.
+        let positions = BoardLayout.classic.positions
+        Task {
+            let newTiles = await Task.detached(priority: .userInitiated) {
+                LevelGenerator.generateFromPositions(positions)
+            }.value
+            self.tiles = newTiles
+            
+            let minCol = newTiles.map(\.col).min() ?? 0
+            let minRow = newTiles.map(\.row).min() ?? 0
+            let maxCol = newTiles.map(\.col).max() ?? 0
+            let maxRow = newTiles.map(\.row).max() ?? 0
+            self.boardBounds = BoardBounds(minCol: minCol, minRow: minRow, maxCol: maxCol, maxRow: maxRow)
+            
+            self.updateMatchesAvailable()
+            self.checkForDeadlock()
+            
+            // Delay starting the timer and incrementing totalGamesPlayed until generation completes
+            self.startTimer()
+            PersistenceService.shared.totalGamesPlayed += 1
+        }
+
+        // Shelf is always enabled (Vita Mahjong rules)
+        enableShelfMode()
+    }
+
+    // MARK: - Shelf mode
+
+    func enableShelfMode() {
+        let shelf = ShelfViewModel()
+        shelf.onMatchFound = { [weak self] existingTile, newTile in
+            guard let self else { return }
+            let now = Date()
+            if let last = self.lastMatchDate, now.timeIntervalSince(last) < 3.0 {
+                self.comboCount += 1
+            } else {
+                self.comboCount = 1
+            }
+            self.lastMatchDate = now
+            let multiplier: Double = self.comboCount >= 5 ? 2.0 : self.comboCount >= 3 ? 1.5 : 1.0
+            let addedScore = Int(100.0 * multiplier)
+            self.score += addedScore
+            self.moves += 1
+            PersistenceService.shared.totalPairsMatched += 1
+            
+            // Track shelf match in undo history (existingTile first, newTile/recently picked second)
+            self.undoHistory.append(.shelfMatch(existingTile, newTile, scoreAdded: addedScore))
+            
+            self.updateMatchesAvailable()
+            self.checkVictory()
+            self.checkForDeadlock()
+        }
+        shelf.onShelfOverflow = { [weak self] in
+            self?.isGameOver = true
+            self?.timer?.cancel()
+        }
+        self.shelfVM = shelf
+        self.isShelfModeEnabled = true
+    }
+
+    func disableShelfMode() {
+        shelfVM?.reset()
+        shelfVM = nil
+        isShelfModeEnabled = false
+    }
+
+    // MARK: - Tile selection (Vita Mahjong rules)
+
+    func selectTile(_ tile: Tile) {
+        // Shelf mode: send tile to shelf instead of direct match
+        if isShelfModeEnabled, let shelf = shelfVM {
+            guard !tile.isRemoved, isTileFree(tile), !isPaused, !isGameOver, !isVictory else { return }
+            cancelHint()
+            
+            // Set removed ONLY if shelf accepted the tile
+            let accepted = shelf.addTile(tile)
+            if accepted {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) {
+                    updateTile(id: tile.id) { $0.isRemoved = true }
+                }
+                undoHistory.append(.shelfSend(tile))
+            }
+            return
+        }
+
+        guard !tile.isRemoved, isTileFree(tile), !isPaused, !isGameOver, !isVictory else { return }
+
+        cancelHint()
+
+        // Tap already-selected tile → deselect
+        if selectedTileID == tile.id {
+            updateTile(id: tile.id) { $0.isSelected = false }
+            selectedTileID = nil
+            return
+        }
+
+        // A different tile is already selected
+        if let selID = selectedTileID,
+           let selTile = tiles.first(where: { $0.id == selID && !$0.isRemoved }) {
+
+            if tile.matches(selTile) {
+                // ✅ Match — clear both
+                let now = Date()
+                if let last = lastMatchDate, now.timeIntervalSince(last) < 3.0 {
+                    comboCount += 1
+                } else {
+                    comboCount = 1
+                }
+                lastMatchDate = now
+
+                let multiplier: Double = comboCount >= 5 ? 2.0 : comboCount >= 3 ? 1.5 : 1.0
+                let addedScore = Int(100.0 * multiplier)
+
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) {
+                    updateTile(id: selID)  { $0.isRemoved = true; $0.isSelected = false }
+                    updateTile(id: tile.id) { $0.isRemoved = true }
+                }
+                selectedTileID = nil
+                undoHistory.append(.boardMatch(selTile, tile, scoreAdded: addedScore))
+
+                score += addedScore
+                moves += 1
+
+                SoundService.shared.play("tile_match")
+                HapticService.impact(.medium)
+                PersistenceService.shared.totalPairsMatched += 1
+
+                updateMatchesAvailable()
+                checkVictory()
+                checkForDeadlock()
+            } else {
+                // ❌ No match — swap selection
+                updateTile(id: selID) { $0.isSelected = false }
+                updateTile(id: tile.id) { $0.isSelected = true }
+                selectedTileID = tile.id
+                SoundService.shared.play("tile_select")
+                HapticService.impact(.light)
+            }
+        } else {
+            // Nothing selected yet — select this tile
+            updateTile(id: tile.id) { $0.isSelected = true }
+            selectedTileID = tile.id
+            SoundService.shared.play("tile_select")
+            HapticService.impact(.light)
+        }
+    }
+
+    // MARK: - Free tile detection
+
+    func isTileFree(_ tile: Tile) -> Bool {
+        guard !tile.isRemoved else { return false }
+        let active = tiles.filter { !$0.isRemoved }
+
+        let blockedAbove = active.contains {
+            $0.id != tile.id && $0.layer == tile.layer + 1 && $0.overlapsHorizontally(tile)
+        }
+        if blockedAbove { return false }
+
+        let leftBlocked = active.contains {
+            $0.id != tile.id && $0.layer == tile.layer &&
+            $0.col + 2 == tile.col && $0.occupiedRows.overlaps(tile.occupiedRows)
+        }
+        let rightBlocked = active.contains {
+            $0.id != tile.id && $0.layer == tile.layer &&
+            $0.col == tile.col + 2 && $0.occupiedRows.overlaps(tile.occupiedRows)
+        }
+        return !leftBlocked || !rightBlocked
+    }
+
+    // MARK: - Hint
+
+    func useHint() {
+        guard hintsRemaining > 0, !isPaused else { return }
+        guard let result = findHint() else { return }
+        hintsRemaining -= 1
+        score = max(0, score - 50)
+        streakCount = 0
+        currentHint = result
+        HapticService.impact(.light)
+        hintTask?.cancel()
+        hintTask = Task {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard !Task.isCancelled else { return }
+            currentHint = nil
+        }
+    }
+
+    private func cancelHint() {
+        hintTask?.cancel()
+        hintTask = nil
+        currentHint = nil
+    }
+
+    private func findHint() -> HintResult? {
+        // Tier 1: free pair
+        let free = tiles.filter { !$0.isRemoved && isTileFree($0) }
+        for i in 0..<free.count {
+            for j in (i + 1)..<free.count {
+                if free[i].matches(free[j]) {
+                    return HintResult(kind: .freePair, matchTileA: free[i].id, matchTileB: free[j].id)
+                }
+            }
+        }
+
+        // Tier 2: blocker path (only highlighting free tiles)
+        let active = tiles.filter { !$0.isRemoved }
+        for tile in active where !isTileFree(tile) {
+            let blockers = active.filter { b in
+                b.id != tile.id && (
+                    // same layer, directly left or right adjacent
+                    (b.layer == tile.layer &&
+                        (b.col + 2 == tile.col || b.col == tile.col + 2) &&
+                        b.occupiedRows.overlaps(tile.occupiedRows)) ||
+                    // layer above, overlapping horizontally
+                    (b.layer == tile.layer + 1 && b.overlapsHorizontally(tile))
+                )
+            }
+            for blocker in blockers where isTileFree(blocker) {
+                if let match = active.first(where: { m in
+                    m.id != tile.id && m.id != blocker.id && m.matches(tile) && isTileFree(m)
+                }) {
+                    return HintResult(kind: .blockerPath,
+                                      matchTileA: match.id,
+                                      matchTileB: match.id,
+                                      blockerTileID: blocker.id)
+                }
+            }
+        }
+
+        // Tier 3 — two-level blocker path (only highlighting free tiles)
+        for tile in active where !isTileFree(tile) {
+            guard let match = active.first(where: { m in
+                m.id != tile.id && !m.isRemoved && m.matches(tile) && isTileFree(m)
+            }) else { continue }
+
+            let blockers1 = active.filter { b in
+                b.id != tile.id && (
+                    (b.layer == tile.layer &&
+                     (b.col + 2 == tile.col || b.col == tile.col + 2) &&
+                     b.occupiedRows.overlaps(tile.occupiedRows)) ||
+                    (b.layer == tile.layer + 1 && b.overlapsHorizontally(tile))
+                )
+            }
+            for b1 in blockers1 where !isTileFree(b1) {
+                let blockers2 = active.filter { b2 in
+                    b2.id != b1.id && b2.id != tile.id && (
+                        (b2.layer == b1.layer &&
+                         (b2.col + 2 == b1.col || b2.col == b1.col + 2) &&
+                         b2.occupiedRows.overlaps(b1.occupiedRows)) ||
+                        (b2.layer == b1.layer + 1 && b2.overlapsHorizontally(b1))
+                    )
+                }
+                if let freeB2 = blockers2.first(where: { isTileFree($0) }) {
+                    return HintResult(kind: .blockerPath,
+                                      matchTileA: match.id,
+                                      matchTileB: match.id,
+                                      blockerTileID: freeB2.id)
+                }
+            }
+        }
+
+        return nil
+    }
+
+    // MARK: - Deadlock detection
+
+    private func checkForDeadlock() {
+        guard !tiles.filter({ !$0.isRemoved }).isEmpty else { return }
+        guard !isVictory, !isGameOver else { return }
+        
+        // In shelf-mode, check if shelf has matches or if board has free tiles matching shelf tiles
+        if isShelfModeEnabled {
+            if let shelf = shelfVM, shelf.hasMatchOnShelf() {
+                return
+            }
+            if let shelf = shelfVM {
+                let shelfTiles = shelf.slots.compactMap { $0 }
+                let freeBoardTiles = tiles.filter { !$0.isRemoved && isTileFree($0) }
+                let hasMatchWithShelf = freeBoardTiles.contains { boardTile in
+                    shelfTiles.contains { shelfTile in
+                        boardTile.matches(shelfTile)
+                    }
+                }
+                if hasMatchWithShelf {
+                    return
+                }
+            }
+        }
+
+        if findHint() == nil {
+            showDeadlockAlert = true
+        }
+    }
+
+    // MARK: - Undo
+
+    func undoLastMove() {
+        // Fix guard order: check isPaused first before popping/discarding undo history
+        guard !isPaused else { return }
+        guard undosRemaining > 0 else { return }
+        guard let last = undoHistory.popLast() else { return }
+
+        undosRemaining -= 1
+
+        if isShelfModeEnabled {
+            switch last {
+            case .shelfSend(let tile):
+                if let shelf = shelfVM {
+                    shelf.removeTile(id: tile.id)
+                }
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) {
+                    updateTile(id: tile.id) { $0.isRemoved = false }
+                }
+                updateMatchesAvailable()
+                HapticService.impact(.light)
+
+            case .shelfMatch(let tile1, let tile2, let scoreAdded):
+                // tile1 is existing tile, tile2 is the newly matched tile
+                if let shelf = shelfVM {
+                    shelf.restoreTileToShelf(tile1)
+                }
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) {
+                    updateTile(id: tile2.id) { $0.isRemoved = false }
+                }
+                // Remove the corresponding .shelfSend(tile2) from the undo history
+                if let idx = undoHistory.lastIndex(where: {
+                    if case .shelfSend(let t) = $0, t.id == tile2.id { return true }
+                    return false
+                }) {
+                    undoHistory.remove(at: idx)
+                }
+                score = max(0, score - scoreAdded)
+                moves = max(0, moves - 1)
+                updateMatchesAvailable()
+                HapticService.impact(.light)
+
+            case .boardMatch(let tile1, let tile2, let scoreAdded):
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) {
+                    updateTile(id: tile1.id) { $0.isRemoved = false; $0.isSelected = false }
+                    updateTile(id: tile2.id) { $0.isRemoved = false; $0.isSelected = false }
+                }
+                score = max(0, score - scoreAdded)
+                moves = max(0, moves - 1)
+                updateMatchesAvailable()
+                HapticService.impact(.light)
+            }
+        } else {
+            switch last {
+            case .boardMatch(let tile1, let tile2, let scoreAdded):
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) {
+                    updateTile(id: tile1.id) { $0.isRemoved = false; $0.isSelected = false }
+                    updateTile(id: tile2.id) { $0.isRemoved = false; $0.isSelected = false }
+                }
+                if let selID = selectedTileID {
+                    updateTile(id: selID) { $0.isSelected = false }
+                    selectedTileID = nil
+                }
+                score = max(0, score - scoreAdded)
+                moves = max(0, moves - 1)
+                comboCount = 0
+                lastMatchDate = nil
+                updateMatchesAvailable()
+                HapticService.impact(.light)
+            default:
+                break
+            }
+        }
+        checkVictory()
+        checkForDeadlock()
+    }
+
+    // MARK: - Shuffle
+
+    func shuffle() {
+        guard !isPaused else { return }
+        if let selID = selectedTileID {
+            updateTile(id: selID) { $0.isSelected = false }
+            selectedTileID = nil
+        }
+        comboCount = 0
+        showDeadlockAlert = false
+        
+        // Reset or handle the shelf correctly when shuffle occurs (return shelf tiles to board)
+        if isShelfModeEnabled, let shelf = shelfVM {
+            let shelfTiles = shelf.slots.compactMap { $0 }
+            for tile in shelfTiles {
+                updateTile(id: tile.id) { $0.isRemoved = false }
+            }
+            shelf.reset()
+        }
+
+        let active = tiles.filter { !$0.isRemoved }
+        var values = active.map { (suit: $0.suit, value: $0.value) }.shuffled()
+        values = LevelGenerator.repairPairs(values)
+        var idx = 0
+        for i in tiles.indices where !tiles[i].isRemoved {
+            let old = tiles[i]
+            tiles[i] = Tile(id: old.id, suit: values[idx].suit, value: values[idx].value,
+                            row: old.row, col: old.col, layer: old.layer)
+            idx += 1
+        }
+        HapticService.impact(.heavy)
+        updateMatchesAvailable()
+    }
+
+    // MARK: - Matches Available
+
+    private func updateMatchesAvailable() {
+        let free = tiles.filter { !$0.isRemoved && isTileFree($0) }
+        var count = 0
+        for i in 0..<free.count {
+            for j in (i + 1)..<free.count {
+                if free[i].matches(free[j]) { count += 1 }
+            }
+        }
+        matchesAvailable = count
+    }
+
+    // MARK: - Timer
+
+    func startTimer() {
+        timer?.cancel()
+        timer = Timer.publish(every: 1, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                guard let self, !self.isPaused, !self.isVictory, !self.isGameOver else { return }
+                self.elapsedSeconds += 1
+            }
+    }
+
+    func togglePause() { isPaused.toggle() }
+    func resumeTimer() { isPaused = false }
+
+    // MARK: - Victory
+
+    private func checkVictory() {
+        guard tiles.filter({ !$0.isRemoved }).isEmpty else { return }
+        // In shelf mode, shelf must also be fully cleared
+        if let shelf = shelfVM, shelf.slots.compactMap({ $0 }).count > 0 { return }
+        isVictory = true
+        timer?.cancel()
+        SoundService.shared.play("victory")
+        HapticService.notification(.success)
+        
+        let finalScore = max(0, score - elapsedSeconds * 2)
+        PersistenceService.shared.completeLevel(currentLevel, score: finalScore, time: elapsedSeconds)
+        PersistenceService.shared.clearGame()
+
+        // Animate/publish victory score time penalties step-wise
+        let difference = score - finalScore
+        if difference > 0 {
+            Task {
+                let steps = min(20, difference)
+                let decrementPerStep = difference / steps
+                for _ in 0..<steps {
+                    try? await Task.sleep(nanoseconds: 30_000_000)
+                    self.score = max(finalScore, self.score - decrementPerStep)
+                }
+                self.score = finalScore
+            }
+        } else {
+            score = finalScore
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func updateTile(id: UUID, mutation: (inout Tile) -> Void) {
+        if let idx = tiles.firstIndex(where: { $0.id == id }) {
+            mutation(&tiles[idx])
+        }
+    }
+}
+
+// MARK: - Haptics
+
+enum HapticService {
+    private static let lightGenerator = UIImpactFeedbackGenerator(style: .light)
+    private static let mediumGenerator = UIImpactFeedbackGenerator(style: .medium)
+    private static let heavyGenerator = UIImpactFeedbackGenerator(style: .heavy)
+    private static let notificationGenerator = UINotificationFeedbackGenerator()
+
+    static func prepare() {
+        guard PersistenceService.shared.hapticsEnabled else { return }
+        lightGenerator.prepare()
+        mediumGenerator.prepare()
+        heavyGenerator.prepare()
+        notificationGenerator.prepare()
+    }
+
+    static func impact(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {
+        guard PersistenceService.shared.hapticsEnabled else { return }
+        switch style {
+        case .light:
+            lightGenerator.prepare()
+            lightGenerator.impactOccurred()
+        case .medium:
+            mediumGenerator.prepare()
+            mediumGenerator.impactOccurred()
+        case .heavy:
+            heavyGenerator.prepare()
+            heavyGenerator.impactOccurred()
+        default:
+            let gen = UIImpactFeedbackGenerator(style: style)
+            gen.prepare()
+            gen.impactOccurred()
+        }
+    }
+
+    static func notification(_ type: UINotificationFeedbackGenerator.FeedbackType) {
+        guard PersistenceService.shared.hapticsEnabled else { return }
+        notificationGenerator.prepare()
+        notificationGenerator.notificationOccurred(type)
+    }
+}
