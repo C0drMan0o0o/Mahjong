@@ -499,8 +499,55 @@ final class GameViewModel: ObservableObject {
                             row: old.row, col: old.col, layer: old.layer)
             idx += 1
         }
+        separateAdjacentFreeMatches()
         HapticService.impact(.heavy)
         updateMatchesAvailable()
+    }
+
+    // After a shuffle, swap values to break up adjacent free tiles that already match.
+    private func separateAdjacentFreeMatches() {
+        let maxPasses = 40
+        for _ in 0..<maxPasses {
+            // Recompute free indices each pass so we work with current state.
+            let freeIndices = tiles.indices.filter { !tiles[$0].isRemoved && isTileFree(tiles[$0]) }
+            var swapped = false
+            outer: for i in freeIndices {
+                for j in freeIndices where j != i {
+                    let a = tiles[i], b = tiles[j]
+                    guard areAdjacentFree(a, b), a.matches(b) else { continue }
+                    // Find a free tile c whose value won't match a after the swap,
+                    // and that won't introduce a new adjacent free match at its own position.
+                    for k in freeIndices where k != i && k != j {
+                        let c = tiles[k]
+                        // c's current value must not match a (so b's new value is safe next to a)
+                        guard !c.matches(a) else { continue }
+                        // c must not be adjacent to a (avoid creating a new problem there)
+                        guard !areAdjacentFree(a, c) else { continue }
+                        // Any new adjacencies introduced at c's position are resolved in the next pass.
+                        // Swap values of b (index j) and c (index k)
+                        let bSuit = tiles[j].suit; let bVal = tiles[j].value
+                        tiles[j] = Tile(id: tiles[j].id, suit: tiles[k].suit, value: tiles[k].value,
+                                        row: tiles[j].row, col: tiles[j].col, layer: tiles[j].layer)
+                        tiles[k] = Tile(id: tiles[k].id, suit: bSuit, value: bVal,
+                                        row: tiles[k].row, col: tiles[k].col, layer: tiles[k].layer)
+                        swapped = true
+                        break outer
+                    }
+                }
+            }
+            if !swapped { break }
+        }
+    }
+
+    private func areAdjacentFree(_ a: Tile, _ b: Tile) -> Bool {
+        guard a.layer == b.layer else { return false }
+        let colDiff = abs(a.col - b.col)
+        let rowDiff = abs(a.row - b.row)
+        let rowsOverlap = a.occupiedRows.overlaps(b.occupiedRows)
+        let colsOverlap = a.occupiedCols.overlaps(b.occupiedCols)
+        // Horizontal neighbors: columns 2 apart, same row band
+        // Vertical neighbors: rows 2 apart, same column band
+        return (colDiff == 2 && rowsOverlap) || (rowDiff == 2 && colsOverlap)
     }
 
     // MARK: - Matches Available

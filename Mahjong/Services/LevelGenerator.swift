@@ -206,9 +206,18 @@ enum LevelGenerator {
             }
         }
 
+        // Round-robin interleave groups so matching tiles are spread across board positions
+        // rather than placed in consecutive slots (which causes runs of identical adjacent tiles).
+        var shuffledGroups = groups.map { $0.shuffled() }
+        shuffledGroups.shuffle()
         var result: [(suit: TileSuit, value: Int)] = []
-        for group in groups.shuffled() {
-            result.append(contentsOf: group.shuffled())
+        var anyLeft = true
+        while anyLeft {
+            anyLeft = false
+            for i in shuffledGroups.indices where !shuffledGroups[i].isEmpty {
+                result.append(shuffledGroups[i].removeFirst())
+                anyLeft = true
+            }
         }
         result.append(contentsOf: singletons.shuffled())
         return result
