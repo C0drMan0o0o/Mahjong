@@ -44,6 +44,7 @@ final class GameViewModel: ObservableObject {
     @Published var elapsedSeconds: Int = 0
     @Published var hintsRemaining: Int = 3
     @Published var undosRemaining: Int = 5
+    @Published var shufflesRemaining: Int = 5
     @Published var isGameOver: Bool = false
     @Published var isVictory: Bool = false
     @Published var currentHint: HintResult? = nil
@@ -80,6 +81,7 @@ final class GameViewModel: ObservableObject {
         elapsedSeconds = 0
         hintsRemaining = 3
         undosRemaining = 5
+        shufflesRemaining = 5
         isGameOver = false
         isVictory = false
         streakCount = 0
@@ -477,8 +479,10 @@ final class GameViewModel: ObservableObject {
             updateTile(id: selID) { $0.isSelected = false }
             selectedTileID = nil
         }
+        guard shufflesRemaining > 0 else { return }
         comboCount = 0
         showDeadlockAlert = false
+        shufflesRemaining -= 1
         
         // Reset or handle the shelf correctly when shuffle occurs (return shelf tiles to board)
         if isShelfModeEnabled, let shelf = shelfVM {

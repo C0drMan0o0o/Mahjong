@@ -170,23 +170,37 @@ struct GameView: View {
             toolButton(icon: "💡", label: "Hint \(vm.hintsRemaining)",
                        disabled: vm.hintsRemaining == 0) { vm.useHint() }
 
-            toolButton(icon: "↩️", label: "Undo",
-                       disabled: false) { vm.undoLastMove() }
+            toolButton(icon: "↩️", label: "Undo", count: vm.undosRemaining,
+                       disabled: vm.undosRemaining == 0) { vm.undoLastMove() }
 
-            toolButton(icon: "🔀", label: "Shuffle", disabled: false) { vm.shuffle() }
+            toolButton(icon: "🔀", label: "Shuffle", count: vm.shufflesRemaining,
+                       disabled: vm.shufflesRemaining == 0) { vm.shuffle() }
         }
         .padding(.horizontal, 30)
         .padding(.vertical, 12)
         .background(Color.black.opacity(0.3))
     }
 
-    private func toolButton(icon: String, label: String,
+    private func toolButton(icon: String, label: String, count: Int? = nil,
                              disabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 3) {
-                Text(icon).font(.system(size: 26))
-                    .opacity(disabled ? 0.3 : 1)
-                    .accessibilityHidden(true)
+                ZStack(alignment: .topTrailing) {
+                    Text(icon).font(.system(size: 26))
+                        .opacity(disabled ? 0.3 : 1)
+                        .accessibilityHidden(true)
+                    if let count {
+                        Text("\(count)")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(count == 0 ? Color.gray.opacity(0.7) : Color.accentColor.opacity(0.85))
+                            .clipShape(Capsule())
+                            .offset(x: 8, y: -4)
+                            .accessibilityHidden(true)
+                    }
+                }
                 Text(label)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(.white.opacity(disabled ? 0.3 : 0.75))
@@ -195,7 +209,7 @@ struct GameView: View {
         }
         .disabled(disabled)
         .buttonStyle(.plain)
-        .accessibilityLabel(label)
+        .accessibilityLabel(count.map { "\(label), used \($0) times" } ?? label)
     }
 
     // MARK: - Overlays
@@ -223,6 +237,7 @@ struct GameView: View {
                     .font(.system(size: 14))
                     .foregroundColor(.white.opacity(0.65))
                     .multilineTextAlignment(.center)
+
                 HStack(spacing: 14) {
                     actionBtn("Shuffle 🔀", color: Color(hex: "#1B4332")) {
                         vm.shuffle()
