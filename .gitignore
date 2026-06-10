@@ -26,6 +26,3 @@ DerivedData/
 .DS_Store
 .AppleDouble
 .LSOverride
-
-# Claude Code
-.claude/
