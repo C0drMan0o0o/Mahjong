@@ -45,7 +45,10 @@ final class GameViewModel: ObservableObject {
     @Published var hintsRemaining: Int = 3
     @Published var undosRemaining: Int = 5
     @Published var shufflesRemaining: Int = 5
+    @Published var revivesRemaining: Int = 3
+    enum GameOverReason { case shelfOverflow, noMoves }
     @Published var isGameOver: Bool = false
+    @Published var gameOverReason: GameOverReason? = nil
     @Published var isVictory: Bool = false
     @Published var currentHint: HintResult? = nil
     @Published var isPaused: Bool = false
@@ -82,7 +85,9 @@ final class GameViewModel: ObservableObject {
         hintsRemaining = 3
         undosRemaining = 5
         shufflesRemaining = 5
+        revivesRemaining = 3
         isGameOver = false
+        gameOverReason = nil
         isVictory = false
         streakCount = 0
         hintTask?.cancel()
@@ -153,6 +158,7 @@ final class GameViewModel: ObservableObject {
             self.checkForDeadlock()
         }
         shelf.onShelfOverflow = { [weak self] in
+            self?.gameOverReason = .shelfOverflow
             self?.isGameOver = true
             self?.timer?.cancel()
         }
@@ -390,6 +396,7 @@ final class GameViewModel: ObservableObject {
         }
 
         if findHint() == nil {
+            gameOverReason = .noMoves
             showDeadlockAlert = true
         }
     }
@@ -469,6 +476,35 @@ final class GameViewModel: ObservableObject {
         }
         checkVictory()
         checkForDeadlock()
+    }
+
+    // MARK: - Revive
+
+    func revive() {
+        guard revivesRemaining > 0 else { return }
+        revivesRemaining -= 1
+
+        switch gameOverReason {
+        case .shelfOverflow:
+            // Return the last 3 tiles from the shelf to the board (multi-undo).
+            // The board state is otherwise preserved exactly as-is.
+            if isShelfModeEnabled, let shelf = shelfVM {
+                let tilesToReturn = shelf.slots.compactMap { $0 }.suffix(3)
+                for tile in tilesToReturn {
+                    shelf.removeTile(id: tile.id)
+                    updateTile(id: tile.id) { $0.isRemoved = false }
+                }
+            }
+
+        case .noMoves, .none:
+            // Free shuffle — doesn't consume the player's shuffle allowance.
+            shufflesRemaining += 1
+            shuffle()
+        }
+
+        gameOverReason = nil
+        isGameOver = false
+        updateMatchesAvailable()
     }
 
     // MARK: - Shuffle

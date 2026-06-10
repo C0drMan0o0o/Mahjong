@@ -238,17 +238,28 @@ struct GameView: View {
                     .foregroundColor(.white.opacity(0.65))
                     .multilineTextAlignment(.center)
 
-                HStack(spacing: 14) {
-                    actionBtn("Shuffle 🔀", color: Color(hex: "#1B4332")) {
-                        vm.shuffle()
+                if vm.revivesRemaining > 0 {
+                    HStack(spacing: 14) {
+                        actionBtn("Revive (\(vm.revivesRemaining))", color: Color(hex: "#1B4332")) {
+                            vm.revive()
+                        }
+                        actionBtn("Restart", color: Color(hex: "#2C3E50")) {
+                            vm.newGame(level: level)
+                        }
                     }
-                    actionBtn("Restart", color: Color(hex: "#2C3E50")) {
-                        vm.newGame(level: level)
+                    Button("Main Menu") { dismiss() }
+                        .foregroundColor(.white.opacity(0.45))
+                        .padding(.top, 4)
+                } else {
+                    HStack(spacing: 14) {
+                        actionBtn("Restart", color: Color(hex: "#2C3E50")) {
+                            vm.newGame(level: level)
+                        }
+                        actionBtn("Main Menu", color: Color(hex: "#4A3728")) {
+                            dismiss()
+                        }
                     }
                 }
-                Button("Main Menu") { dismiss() }
-                    .foregroundColor(.white.opacity(0.45))
-                    .padding(.top, 4)
             }
             .padding(28)
             .background(Color(hex: "#2C1810").opacity(0.97))
