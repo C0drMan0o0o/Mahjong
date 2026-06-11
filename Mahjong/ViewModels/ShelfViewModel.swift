@@ -55,8 +55,13 @@ final class ShelfViewModel: ObservableObject {
             return false
         }
 
-        // Place tile in first available slot
-        guard let emptyIndex = slots.firstIndex(where: { $0 == nil }) else {
+        // Place tile in first available slot, or into a slot being cleared by a match animation
+        let emptyIndex: Int
+        if let nilIndex = slots.firstIndex(where: { $0 == nil }) {
+            emptyIndex = nilIndex
+        } else if let animatingIndex = slots.firstIndex(where: { $0 != nil && matchingTileIDs.contains($0!.id) }) {
+            emptyIndex = animatingIndex
+        } else {
             triggerOverflow()
             return false
         }
