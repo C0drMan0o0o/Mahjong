@@ -7,7 +7,7 @@ struct MainMenuView: View {
     @State private var animateDrift = false
 
     private let totalLevels = 50
-    private var highestUnlocked: Int { PersistenceService.shared.highestUnlockedLevel }
+    @State private var highestUnlocked: Int = PersistenceService.shared.highestUnlockedLevel
 
     var body: some View {
         GeometryReader { geo in
@@ -106,6 +106,10 @@ struct MainMenuView: View {
             .fullScreenCover(item: $selectedLevelWrapper) { wrapper in
                 GameView(level: wrapper.level)
             }
+            .onChange(of: selectedLevelWrapper) {
+                // Refresh unlock state whenever the game screen is dismissed.
+                highestUnlocked = PersistenceService.shared.highestUnlockedLevel
+            }
             .sheet(isPresented: $showSettings) { SettingsView() }
         } // GeometryReader
     }
@@ -197,7 +201,7 @@ struct DriftTile: Identifiable {
 }
 
 // Wraps Int so it works with .fullScreenCover(item:)
-struct LevelWrapper: Identifiable {
+struct LevelWrapper: Identifiable, Equatable {
     let id: Int
     let level: Int
     init(level: Int) { self.id = level; self.level = level }
