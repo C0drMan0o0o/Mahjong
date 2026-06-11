@@ -90,7 +90,7 @@ enum LevelGenerator {
                 }
             }
         } else {
-            var shuffled = free.shuffled()
+            let shuffled = free.shuffled()
             let take = min(shuffled.count, kMaxCandidates)
             for i in 0..<(take - 1) {
                 candidates.append((shuffled[i], shuffled[i + 1]))
