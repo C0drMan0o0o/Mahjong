@@ -329,7 +329,7 @@ final class GameViewModel: ObservableObject {
                 }) {
                     return HintResult(kind: .blockerPath,
                                       matchTileA: match.id,
-                                      matchTileB: match.id,
+                                      matchTileB: tile.id,
                                       blockerTileID: blocker.id)
                 }
             }
@@ -361,7 +361,7 @@ final class GameViewModel: ObservableObject {
                 if let freeB2 = blockers2.first(where: { isTileFree($0) }) {
                     return HintResult(kind: .blockerPath,
                                       matchTileA: match.id,
-                                      matchTileB: match.id,
+                                      matchTileB: tile.id,
                                       blockerTileID: freeB2.id)
                 }
             }
