@@ -7,6 +7,7 @@ import SwiftUI
 struct TileShelfView: View {
 
     @ObservedObject var shelfVM: ShelfViewModel
+    var hintTileID: UUID? = nil
 
     /// True when the shelf is full AND contains no matching pair — signals the player is stuck.
     private var isBlocked: Bool {
@@ -48,8 +49,9 @@ struct TileShelfView: View {
             ForEach(0..<4, id: \.self) { index in
                 let tile     = shelfVM.slots[index]
                 let matching = tile.map { shelfVM.matchingTileIDs.contains($0.id) } ?? false
+                let hinted   = tile.map { $0.id == hintTileID } ?? false
 
-                SlotView(tile: tile, isMatching: matching)
+                SlotView(tile: tile, isMatching: matching, isHinted: hinted)
             }
         }
     }
@@ -87,11 +89,12 @@ private struct SlotView: View {
 
     let tile: Tile?
     let isMatching: Bool
+    var isHinted: Bool = false
 
     var body: some View {
         ZStack {
             if let tile {
-                TileChipView(tile: tile, isMatching: isMatching)
+                TileChipView(tile: tile, isMatching: isMatching, isHinted: isHinted)
                     .transition(
                         .asymmetric(
                             insertion: .scale(scale: 0.6)
@@ -134,9 +137,11 @@ private struct TileChipView: View {
 
     let tile: Tile
     let isMatching: Bool
+    var isHinted: Bool = false
 
     /// Drive the pulse animation locally.
     @State private var glowPulse = false
+    @State private var hintPulse = false
 
     private var definition: TileDefinition? {
         TileDefinition.lookup[tile.suit]?[tile.value]
@@ -150,25 +155,44 @@ private struct TileChipView: View {
             // Tile face
             tileFace
         }
-        // Gold glow when matched
+        // Gold glow when matched or hinted
         .shadow(
             color: isMatching
                 ? Color(hex: "#FFD700").opacity(glowPulse ? 0.9 : 0.35)
-                : .clear,
-            radius: isMatching ? 10 : 0
+                : isHinted
+                    ? Color(hex: "#FFD700").opacity(hintPulse ? 0.75 : 0.2)
+                    : .clear,
+            radius: isMatching ? 10 : isHinted ? 8 : 0
         )
         .scaleEffect(isMatching ? (glowPulse ? 1.10 : 1.05) : 1.0)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(
+                    Color(hex: "#FFD700").opacity(isHinted ? (hintPulse ? 0.9 : 0.3) : 0),
+                    lineWidth: 2
+                )
+        )
         .animation(
             isMatching
                 ? .easeInOut(duration: 0.45).repeatForever(autoreverses: true)
                 : .spring(response: 0.3, dampingFraction: 0.65),
             value: glowPulse
         )
+        .animation(
+            isHinted
+                ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true)
+                : .default,
+            value: hintPulse
+        )
         .onChange(of: isMatching) { _, nowMatching in
             glowPulse = nowMatching
         }
+        .onChange(of: isHinted) { _, nowHinted in
+            hintPulse = nowHinted
+        }
         .onAppear {
             if isMatching { glowPulse = true }
+            if isHinted { hintPulse = true }
         }
     }
 

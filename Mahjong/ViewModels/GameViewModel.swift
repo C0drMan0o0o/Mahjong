@@ -6,13 +6,25 @@ import UIKit
 
 struct HintResult {
     enum Kind {
-        case freePair
-        case blockerPath
+        case freePair       // two free board tiles match — send both to shelf
+        case shelfMatch     // one free board tile matches a tile on the shelf
+        case blockerPath    // send orange tile first to open up a future match
     }
     let kind: Kind
     let matchTileA: UUID
     let matchTileB: UUID
     var blockerTileID: UUID? = nil
+    var shelfTileID: UUID? = nil    // shelf tile to highlight (shelfMatch only)
+
+    func message(hasShelfContext: Bool) -> String {
+        switch kind {
+        case .freePair:    return "Send both glowing tiles to your shelf!"
+        case .shelfMatch:  return "This tile completes a match on your shelf!"
+        case .blockerPath: return hasShelfContext
+            ? "Send the orange tile first to unlock a shelf match!"
+            : "Send the orange tile first to open a match"
+        }
+    }
 }
 
 enum HintRole {
@@ -287,7 +299,7 @@ final class GameViewModel: ObservableObject {
         HapticService.impact(.light)
         hintTask?.cancel()
         hintTask = Task {
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
             guard !Task.isCancelled else { return }
             currentHint = nil
         }
@@ -300,8 +312,52 @@ final class GameViewModel: ObservableObject {
     }
 
     private func findHint() -> HintResult? {
-        // Tier 1: free pair
-        let free = tiles.filter { !$0.isRemoved && isTileFree($0) }
+        let active = tiles.filter { !$0.isRemoved }
+        let free = active.filter { isTileFree($0) }
+
+        // Tier 1 (shelf mode): free board tile matches a tile already on the shelf.
+        // Most immediately useful — player sends one tile to get an instant clear.
+        // Exclude tiles currently mid-animation (matchingTileIDs) so we don't hint at
+        // a shelf tile that is about to vanish.
+        if isShelfModeEnabled, let shelf = shelfVM {
+            let animatingIDs = shelf.matchingTileIDs
+            let shelfTiles = shelf.slots.compactMap { $0 }.filter { !animatingIDs.contains($0.id) }
+            for boardTile in free {
+                if let shelfMatch = shelfTiles.first(where: { boardTile.matches($0) }) {
+                    return HintResult(kind: .shelfMatch,
+                                      matchTileA: boardTile.id,
+                                      matchTileB: boardTile.id,
+                                      shelfTileID: shelfMatch.id)
+                }
+            }
+        }
+
+        // Tier 1.5 (shelf mode): a blocked board tile matches a shelf tile.
+        // Show the player which free blocker to tap first. Pick the most accessible
+        // candidate (fewest direct blockers).
+        if isShelfModeEnabled, let shelf = shelfVM {
+            let animatingIDs = shelf.matchingTileIDs
+            let shelfTiles = shelf.slots.compactMap { $0 }.filter { !animatingIDs.contains($0.id) }
+            var bestCandidate: (blockedTile: Tile, shelfTile: Tile, blocker: Tile, blockerCount: Int)?
+            for boardTile in active where !isTileFree(boardTile) {
+                guard let shelfTile = shelfTiles.first(where: { boardTile.matches($0) }) else { continue }
+                let blockers = directBlockers(of: boardTile, in: active)
+                guard let freeBlocker = blockers.first(where: { isTileFree($0) }) else { continue }
+                let count = blockers.count
+                if bestCandidate == nil || count < bestCandidate!.blockerCount {
+                    bestCandidate = (boardTile, shelfTile, freeBlocker, count)
+                }
+            }
+            if let c = bestCandidate {
+                return HintResult(kind: .blockerPath,
+                                  matchTileA: c.blockedTile.id,
+                                  matchTileB: c.blockedTile.id,
+                                  blockerTileID: c.blocker.id,
+                                  shelfTileID: c.shelfTile.id)
+            }
+        }
+
+        // Tier 2: two free board tiles that match each other.
         for i in 0..<free.count {
             for j in (i + 1)..<free.count {
                 if free[i].matches(free[j]) {
@@ -310,64 +366,59 @@ final class GameViewModel: ObservableObject {
             }
         }
 
-        // Tier 2: blocker path (only highlighting free tiles)
-        let active = tiles.filter { !$0.isRemoved }
+        // Tier 3: a free blocker (orange) whose removal exposes a blocked tile that has a
+        // free match partner (gold). Pick the most accessible candidate (fewest blockers).
+        var tier3Best: (match: Tile, tile: Tile, blocker: Tile, count: Int)?
         for tile in active where !isTileFree(tile) {
-            let blockers = active.filter { b in
-                b.id != tile.id && (
-                    // same layer, directly left or right adjacent
-                    (b.layer == tile.layer &&
-                        (b.col + 2 == tile.col || b.col == tile.col + 2) &&
-                        b.occupiedRows.overlaps(tile.occupiedRows)) ||
-                    // layer above, overlapping horizontally
-                    (b.layer == tile.layer + 1 && b.overlapsHorizontally(tile))
-                )
+            guard let match = free.first(where: { $0.id != tile.id && $0.matches(tile) }) else { continue }
+            let blockers = directBlockers(of: tile, in: active)
+            guard let freeBlocker = blockers.first(where: { isTileFree($0) && $0.id != match.id }) else { continue }
+            let count = blockers.count
+            if tier3Best == nil || count < tier3Best!.count {
+                tier3Best = (match, tile, freeBlocker, count)
             }
-            for blocker in blockers where isTileFree(blocker) {
-                if let match = active.first(where: { m in
-                    m.id != tile.id && m.id != blocker.id && m.matches(tile) && isTileFree(m)
-                }) {
-                    return HintResult(kind: .blockerPath,
-                                      matchTileA: match.id,
-                                      matchTileB: tile.id,
-                                      blockerTileID: blocker.id)
+        }
+        if let b = tier3Best {
+            return HintResult(kind: .blockerPath,
+                              matchTileA: b.match.id,
+                              matchTileB: b.tile.id,
+                              blockerTileID: b.blocker.id)
+        }
+
+        // Tier 4: two-level blocker — the immediate blocker is itself blocked, but its
+        // blocker is free. Pick the candidate with the fewest second-level blockers.
+        var tier4Best: (match: Tile, tile: Tile, freeB2: Tile, count: Int)?
+        for tile in active where !isTileFree(tile) {
+            guard let match = free.first(where: { $0.id != tile.id && $0.matches(tile) }) else { continue }
+            let blockers1 = directBlockers(of: tile, in: active)
+            for b1 in blockers1 where !isTileFree(b1) {
+                let blockers2 = directBlockers(of: b1, in: active).filter { $0.id != tile.id }
+                guard let freeB2 = blockers2.first(where: { isTileFree($0) && $0.id != match.id }) else { continue }
+                let count = blockers2.count
+                if tier4Best == nil || count < tier4Best!.count {
+                    tier4Best = (match, tile, freeB2, count)
                 }
             }
         }
-
-        // Tier 3 — two-level blocker path (only highlighting free tiles)
-        for tile in active where !isTileFree(tile) {
-            guard let match = active.first(where: { m in
-                m.id != tile.id && !m.isRemoved && m.matches(tile) && isTileFree(m)
-            }) else { continue }
-
-            let blockers1 = active.filter { b in
-                b.id != tile.id && (
-                    (b.layer == tile.layer &&
-                     (b.col + 2 == tile.col || b.col == tile.col + 2) &&
-                     b.occupiedRows.overlaps(tile.occupiedRows)) ||
-                    (b.layer == tile.layer + 1 && b.overlapsHorizontally(tile))
-                )
-            }
-            for b1 in blockers1 where !isTileFree(b1) {
-                let blockers2 = active.filter { b2 in
-                    b2.id != b1.id && b2.id != tile.id && (
-                        (b2.layer == b1.layer &&
-                         (b2.col + 2 == b1.col || b2.col == b1.col + 2) &&
-                         b2.occupiedRows.overlaps(b1.occupiedRows)) ||
-                        (b2.layer == b1.layer + 1 && b2.overlapsHorizontally(b1))
-                    )
-                }
-                if let freeB2 = blockers2.first(where: { isTileFree($0) }) {
-                    return HintResult(kind: .blockerPath,
-                                      matchTileA: match.id,
-                                      matchTileB: tile.id,
-                                      blockerTileID: freeB2.id)
-                }
-            }
+        if let b = tier4Best {
+            return HintResult(kind: .blockerPath,
+                              matchTileA: b.match.id,
+                              matchTileB: b.tile.id,
+                              blockerTileID: b.freeB2.id)
         }
 
         return nil
+    }
+
+    private func directBlockers(of tile: Tile, in active: [Tile]) -> [Tile] {
+        active.filter { b in
+            b.id != tile.id && (
+                (b.layer == tile.layer &&
+                 (b.col + 2 == tile.col || b.col == tile.col + 2) &&
+                 b.occupiedRows.overlaps(tile.occupiedRows)) ||
+                (b.layer == tile.layer + 1 && b.overlapsHorizontally(tile))
+            )
+        }
     }
 
     // MARK: - Deadlock detection

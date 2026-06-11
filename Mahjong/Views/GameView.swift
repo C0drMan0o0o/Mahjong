@@ -4,6 +4,7 @@ struct GameView: View {
     let level: Int
     @StateObject private var vm: GameViewModel
     @Environment(\.dismiss) private var dismiss
+    @State private var hintProgress: CGFloat = 1.0
 
     init(level: Int) {
         self.level = level
@@ -45,9 +46,43 @@ struct GameView: View {
                 GameBoardView(vm: vm)
                     .padding(8)
 
+                // ── Hint message banner ──────────────────────
+                Group {
+                    if let hint = vm.currentHint {
+                        VStack(spacing: 4) {
+                            Text(hint.message(hasShelfContext: hint.shelfTileID != nil))
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(Color(hex: "#FFD700"))
+
+                            GeometryReader { geo in
+                                Capsule()
+                                    .fill(Color(hex: "#FFD700").opacity(0.6))
+                                    .frame(width: geo.size.width * hintProgress, height: 2)
+                            }
+                            .frame(height: 2)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 5)
+                        .background(Color.black.opacity(0.45))
+                        .cornerRadius(20)
+                        .transition(.scale.combined(with: .opacity))
+                        .onAppear {
+                            hintProgress = 1.0
+                            withAnimation(.linear(duration: 4)) {
+                                hintProgress = 0.0
+                            }
+                        }
+                        .onDisappear {
+                            hintProgress = 1.0
+                        }
+                    }
+                }
+                .animation(.spring(), value: vm.currentHint != nil)
+
                 // ── Shelf (always visible) ────────────────────
                 if let shelf = vm.shelfVM {
-                    TileShelfView(shelfVM: shelf)
+                    TileShelfView(shelfVM: shelf,
+                                  hintTileID: vm.currentHint?.shelfTileID)
                         .padding(.horizontal, 12)
                         .padding(.top, 6)
                 }
