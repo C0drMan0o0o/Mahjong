@@ -115,14 +115,14 @@ struct GameView: View {
             Spacer()
 
             VStack(spacing: 2) {
-                Text("MOVES")
+                Text("PAIRS")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundColor(.white.opacity(0.5))
-                Text("\(vm.matchesAvailable)")
+                Text("\(vm.moves)")
                     .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundColor(vm.matchesAvailable == 0 ? Color(hex: "#FF4444") : .white)
+                    .foregroundColor(.white)
                     .contentTransition(.numericText())
-                    .animation(.spring(), value: vm.matchesAvailable)
+                    .animation(.spring(), value: vm.moves)
             }
 
             Spacer()
