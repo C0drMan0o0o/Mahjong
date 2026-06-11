@@ -209,7 +209,7 @@ struct GameView: View {
         }
         .disabled(disabled)
         .buttonStyle(.plain)
-        .accessibilityLabel(count.map { "\(label), used \($0) times" } ?? label)
+        .accessibilityLabel(count.map { "\(label), \($0) remaining" } ?? label)
     }
 
     // MARK: - Overlays
