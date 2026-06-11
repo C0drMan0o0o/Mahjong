@@ -505,6 +505,7 @@ final class GameViewModel: ObservableObject {
         gameOverReason = nil
         isGameOver = false
         updateMatchesAvailable()
+        startTimer()
     }
 
     // MARK: - Shuffle
