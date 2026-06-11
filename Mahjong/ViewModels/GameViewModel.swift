@@ -440,6 +440,8 @@ final class GameViewModel: ObservableObject {
                 }
                 score = max(0, score - scoreAdded)
                 moves = max(0, moves - 1)
+                comboCount = 0
+                lastMatchDate = nil
                 updateMatchesAvailable()
                 HapticService.impact(.light)
 
