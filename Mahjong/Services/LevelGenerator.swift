@@ -1,7 +1,7 @@
 import Foundation
 
 enum LevelGenerator {
-    /// Build a shuffled, solvable tile set for the given layout.
+    /// Build a guaranteed-solvable tile set for the given layout.
     /// Prefer `generateFromPositions(_:)` when calling from a non-isolated context.
     static func generate(for layout: BoardLayout) -> [Tile] {
         generateFromPositions(layout.positions)
@@ -9,176 +9,193 @@ enum LevelGenerator {
 
     /// Nonisolated entry point — safe to call from `Task.detached`.
     /// Caller must capture `layout.positions` on the main actor first.
+    /// Guaranteed solvable: uses reverse-construction to ensure a valid
+    /// winning sequence exists before returning.
     nonisolated static func generateFromPositions(_ positions: [TilePosition]) -> [Tile] {
-        precondition(positions.count == 144, "Layout must have exactly 144 positions")
+        precondition(positions.count == 72, "Layout must have exactly 72 positions")
 
-        let deck = makeDeck()
-        precondition(deck.count == 144)
-
-        // 1. Fully random shuffle of the deck.
-        let shuffledDeck = pairShuffle(deck)
-
-        // 2. Map shuffled deck onto positions.
-        var tiles = zip(positions, shuffledDeck).map { pos, def in
-            Tile(suit: def.0, value: def.1,
-                 row: pos.row, col: pos.col, layer: pos.layer)
-        }
-
-        // 3. Spread pass: run 3 times to push matching pairs apart.
-        for _ in 0..<3 {
-            tiles = spreadPass(tiles)
-        }
-
-        return tiles
-    }
-
-    // MARK: - Spread shuffle helpers
-
-    nonisolated private static func tilesMatch(_ a: Tile, _ b: Tile) -> Bool {
-        if a.suit == .flower && b.suit == .flower { return true }
-        if a.suit == .season && b.suit == .season { return true }
-        return a.suit == b.suit && a.value == b.value
-    }
-
-    nonisolated private static func areSpatiallyClose(_ a: Tile, _ b: Tile) -> Bool {
-        let sameLayer = a.layer == b.layer
-        let colDist = abs(a.col - b.col)
-        let rowDist = abs(a.row - b.row)
-        return sameLayer && (colDist + rowDist) < 6
-    }
-
-    /// One pass over all tiles: for each matching pair that is spatially close,
-    /// try to swap one tile with a farther-away non-close tile.
-    nonisolated private static func spreadPass(_ input: [Tile]) -> [Tile] {
-        var tiles = input
-
-        for i in 0..<tiles.count {
-            while true {
-                // Find j: the matching partner of i that is spatially close.
-                guard let j = (0..<tiles.count).first(where: { k in
-                    k != i && tilesMatch(tiles[i], tiles[k]) && areSpatiallyClose(tiles[i], tiles[k])
-                }) else { break }
-
-                // Try up to 10 random candidates for the swap target k.
-                var indices = Array(0..<tiles.count)
-                indices.shuffle()
-                var bestK: Int? = nil
-                var bestDist = -1
-                var checkedCount = 0
-
-                for k in indices where k != i && k != j {
-                    // After swap, tiles[i] gets tiles[k]'s suit/value, tiles[k] gets tiles[i]'s.
-                    // Check: would the new tiles[i] (now with k's suit/value) still be close to j?
-                    let kSuit = tiles[k].suit
-                    let kValue = tiles[k].value
-                    let fakeTileAtI = Tile(suit: kSuit, value: kValue,
-                                          row: tiles[i].row, col: tiles[i].col, layer: tiles[i].layer)
-                    // We want fakeTileAtI to NOT match tiles[j], or if it does match, not be close.
-                    let wouldBeClose = tilesMatch(fakeTileAtI, tiles[j]) && areSpatiallyClose(fakeTileAtI, tiles[j])
-                    if wouldBeClose { continue }
-
-                    // Track the best k by distance from j (maximise Manhattan distance).
-                    let dist = abs(tiles[k].col - tiles[j].col) + abs(tiles[k].row - tiles[j].row)
-                    if dist > bestDist {
-                        bestDist = dist
-                        bestK = k
-                    }
-
-                    // Accept best candidate found after checking 10 valid options.
-                    checkedCount += 1
-                    if bestK != nil && checkedCount >= 10 { break }
+        let maxAttempts = 20
+        for _ in 0..<maxAttempts {
+            if let assignment = buildSolvableAssignment(positions: positions) {
+                return zip(positions, assignment).map { pos, def in
+                    Tile(suit: def.0, value: def.1,
+                         row: pos.row, col: pos.col, layer: pos.layer)
                 }
-
-                guard let k = bestK else { break }
-
-                // Swap the suit/value of tiles[i] and tiles[k], keeping positions fixed.
-                let (iSuit, iValue) = (tiles[i].suit, tiles[i].value)
-                let (kSuit, kValue) = (tiles[k].suit, tiles[k].value)
-                tiles[i] = Tile(suit: kSuit, value: kValue,
-                                row: tiles[i].row, col: tiles[i].col, layer: tiles[i].layer)
-                tiles[k] = Tile(suit: iSuit, value: iValue,
-                                row: tiles[k].row, col: tiles[k].col, layer: tiles[k].layer)
             }
         }
 
-        return tiles
+        // Should never reach here for this layout. Emit an assertion in debug
+        // so the issue is caught; in release return a best-effort board.
+        assertionFailure("LevelGenerator: failed solvable generation after \(maxAttempts) attempts")
+        var fallback: [(TileSuit, Int)] = []
+        for pair in makeDeckPairs() { fallback.append(pair); fallback.append(pair) }
+        return zip(positions, fallback).map { pos, def in
+            Tile(suit: def.0, value: def.1, row: pos.row, col: pos.col, layer: pos.layer)
+        }
+    }
+
+    // MARK: - Core solvable assignment
+
+    /// Simulates removing 36 pairs from the layout, then assigns tile values in
+    /// the order pairs were freed. Returns nil if the simulation gets stuck.
+    nonisolated private static func buildSolvableAssignment(
+        positions: [TilePosition]
+    ) -> [(TileSuit, Int)]? {
+        var active = Set(0..<positions.count)
+        var removalOrder: [(Int, Int)] = []
+        removalOrder.reserveCapacity(36)
+
+        for _ in 0..<36 {
+            let free = computeFreeTiles(positions: positions, active: active)
+            guard free.count >= 2 else { return nil }
+
+            // Pick the pair whose removal leaves the most free tiles, so the
+            // player always has plenty of options and is never forced into a
+            // single move. Among equally-scoring pairs prefer spatially close
+            // ones so matching tiles are easy to spot on screen.
+            let (a, b) = bestPair(free: free, positions: positions, active: active)
+            removalOrder.append((a, b))
+            active.remove(a)
+            active.remove(b)
+        }
+
+        let pairs = makeDeckPairs().shuffled()
+        var assignment = [(TileSuit, Int)](repeating: (.man, 0), count: positions.count)
+        for (step, (posA, posB)) in removalOrder.enumerated() {
+            assignment[posA] = pairs[step]
+            assignment[posB] = pairs[step]
+        }
+        return assignment
+    }
+
+    // MARK: - Pair picker
+
+    /// From the current free tiles, returns the pair whose removal maximises the
+    /// number of free tiles remaining (easiest-play heuristic). Ties are broken
+    /// by spatial proximity so matching tiles tend to be near each other.
+    /// Evaluates at most kMaxCandidates random pairs to keep generation fast.
+    nonisolated private static func bestPair(
+        free: [Int],
+        positions: [TilePosition],
+        active: Set<Int>
+    ) -> (Int, Int) {
+        let kMaxCandidates = 40
+
+        // Build a candidate list: all pairs when free is small, a random sample otherwise.
+        var candidates: [(Int, Int)] = []
+        if free.count <= 10 {
+            for i in 0..<free.count {
+                for j in (i + 1)..<free.count {
+                    candidates.append((free[i], free[j]))
+                }
+            }
+        } else {
+            var shuffled = free.shuffled()
+            let take = min(shuffled.count, kMaxCandidates)
+            for i in 0..<(take - 1) {
+                candidates.append((shuffled[i], shuffled[i + 1]))
+            }
+            candidates.append((shuffled[take - 1], shuffled[0]))
+        }
+        candidates.shuffle()
+
+        var bestScore = Int.min
+        var bestCandidates: [(Int, Int)] = []
+
+        for (a, b) in candidates {
+            var testActive = active
+            testActive.remove(a)
+            testActive.remove(b)
+            let newFree = computeFreeTiles(positions: positions, active: testActive).count
+
+            // Proximity bonus (0..10): closer tiles score higher.
+            let pA = positions[a], pB = positions[b]
+            let dist = abs(pA.col - pB.col) + abs(pA.row - pB.row)
+            let proximity = max(0, 10 - dist)
+
+            // Primary sort: free tiles after removal; secondary: proximity.
+            let score = newFree * 100 + proximity
+            if score > bestScore {
+                bestScore = score
+                bestCandidates = [(a, b)]
+            } else if score == bestScore {
+                bestCandidates.append((a, b))
+            }
+        }
+
+        return bestCandidates.randomElement() ?? (free[0], free[1])
+    }
+
+    // MARK: - Free tile computation (mirrors GameViewModel.isTileFree exactly)
+
+    nonisolated private static func computeFreeTiles(
+        positions: [TilePosition],
+        active: Set<Int>
+    ) -> [Int] {
+        active.filter { i in
+            let p = positions[i]
+
+            let blockedAbove = active.contains { j in
+                j != i
+                && positions[j].layer == p.layer + 1
+                && colsOverlap(p, positions[j])
+                && rowsOverlap(p, positions[j])
+            }
+            guard !blockedAbove else { return false }
+
+            let leftBlocked = active.contains { j in
+                j != i
+                && positions[j].layer == p.layer
+                && positions[j].col + 2 == p.col
+                && rowsOverlap(p, positions[j])
+            }
+            let rightBlocked = active.contains { j in
+                j != i
+                && positions[j].layer == p.layer
+                && positions[j].col == p.col + 2
+                && rowsOverlap(p, positions[j])
+            }
+            return !leftBlocked || !rightBlocked
+        }
+    }
+
+    nonisolated private static func colsOverlap(_ a: TilePosition, _ b: TilePosition) -> Bool {
+        (a.col...a.col + 1).overlaps(b.col...b.col + 1)
+    }
+
+    nonisolated private static func rowsOverlap(_ a: TilePosition, _ b: TilePosition) -> Bool {
+        (a.row...a.row + 1).overlaps(b.row...b.row + 1)
     }
 
     // MARK: - Deck building
 
-    nonisolated private static func makeDeck() -> [(suit: TileSuit, value: Int)] {
-        var deck: [(TileSuit, Int)] = []
+    /// Returns 36 unique pair identifiers — one entry per pair.
+    /// Each entry will be assigned to exactly two board positions, ensuring
+    /// Tile.matches (exact suit+value equality) identifies them correctly.
+    nonisolated private static func makeDeckPairs() -> [(TileSuit, Int)] {
+        var pairs: [(TileSuit, Int)] = []
 
-        // Man, Pin, Sou: 4 copies of 1-9
+        // Man, Pin, Sou: 1-9 each = 27 pairs
         for suit in [TileSuit.man, .pin, .sou] {
-            for v in 1...9 {
-                for _ in 0..<4 { deck.append((suit, v)) }
-            }
+            for v in 1...9 { pairs.append((suit, v)) }
         }
-        // Winds 1-4: 4 copies each
-        for v in 1...4 {
-            for _ in 0..<4 { deck.append((.wind, v)) }
-        }
-        // Dragons 1-3: 4 copies each
-        for v in 1...3 {
-            for _ in 0..<4 { deck.append((.dragon, v)) }
-        }
-        // Flowers 1-4: 1 copy each
-        for v in 1...4 { deck.append((.flower, v)) }
-        // Seasons 1-4: 1 copy each
-        for v in 1...4 { deck.append((.season, v)) }
+        // Winds 1-4: 4 pairs
+        for v in 1...4 { pairs.append((.wind, v)) }
+        // Dragons 1-3: 3 pairs
+        for v in 1...3 { pairs.append((.dragon, v)) }
+        // Flowers: 2 pairs — each pair uses the same value so Tile.matches works.
+        // flower(1)+flower(1) is one pair; flower(2)+flower(2) is the other.
+        pairs.append((.flower, 1))
+        pairs.append((.flower, 2))
 
-        precondition(deck.count == 144)
-        return deck
+        // Total: 27 + 4 + 3 + 2 = 36
+        precondition(pairs.count == 36)
+        return pairs
     }
 
-    /// Shuffle while keeping pairs together so board is always solvable at start.
-    nonisolated private static func pairShuffle(_ deck: [(TileSuit, Int)]) -> [(TileSuit, Int)] {
-        // Group identical (or group-matching) tiles
-        var groups: [[(TileSuit, Int)]] = []
-
-        // Flowers all match each other — treat as one group of 4
-        let flowers = deck.filter { $0.0 == .flower }
-        if !flowers.isEmpty { groups.append(flowers) }
-
-        let seasons = deck.filter { $0.0 == .season }
-        if !seasons.isEmpty { groups.append(seasons) }
-
-        // All other tiles: group by (suit, value)
-        let remaining = deck.filter { $0.0 != .flower && $0.0 != .season }
-        struct TileKey: Hashable {
-            let suit: TileSuit
-            let value: Int
-        }
-        var seen = Set<TileKey>()
-        for tile in remaining {
-            let key = TileKey(suit: tile.0, value: tile.1)
-            if !seen.contains(key) {
-                seen.insert(key)
-                groups.append(remaining.filter { $0.0 == tile.0 && $0.1 == tile.1 })
-            }
-        }
-
-        // Shuffle groups, then emit pairs (take 2 from each group, shuffle pair order)
-        groups.shuffle()
-
-        var result: [(TileSuit, Int)] = []
-        for group in groups {
-            var g = group.shuffled()
-            // Emit in pairs
-            while g.count >= 2 {
-                result.append(g.removeFirst())
-                result.append(g.removeFirst())
-            }
-            result.append(contentsOf: g)
-        }
-
-        return result
-    }
+    // MARK: - Shuffle repair (used by GameViewModel after a shuffle)
 
     /// Re-pair an already-active set of (suit, value) pairs to guarantee at least one match.
-    /// Builds a fresh output array so singletons (flowers/seasons with no partner remaining)
-    /// are preserved and never overwritten by another group.
     static func repairPairs(_ values: [(suit: TileSuit, value: Int)]) -> [(suit: TileSuit, value: Int)] {
         var groups: [[(suit: TileSuit, value: Int)]] = []
         var singletons: [(suit: TileSuit, value: Int)] = []
@@ -206,8 +223,6 @@ enum LevelGenerator {
             }
         }
 
-        // Round-robin interleave groups so matching tiles are spread across board positions
-        // rather than placed in consecutive slots (which causes runs of identical adjacent tiles).
         var shuffledGroups = groups.map { $0.shuffled() }
         shuffledGroups.shuffle()
         var result: [(suit: TileSuit, value: Int)] = []
