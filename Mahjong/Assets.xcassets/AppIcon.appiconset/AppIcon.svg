@@ -1,0 +1,86 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3A1E0E"/>
+      <stop offset="100%" stop-color="#1A0A04"/>
+    </linearGradient>
+    <linearGradient id="tileF" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FAF0D0"/>
+      <stop offset="100%" stop-color="#E8D5A0"/>
+    </linearGradient>
+    <linearGradient id="tileR" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#C8A850"/>
+      <stop offset="100%" stop-color="#A07828"/>
+    </linearGradient>
+    <linearGradient id="tileB2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#B09030"/>
+      <stop offset="100%" stop-color="#8A7020"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="40%" r="48%">
+      <stop offset="0%" stop-color="#F5C842" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#F5C842" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="18" stdDeviation="32" flood-color="#000" flood-opacity="0.55"/>
+    </filter>
+    <filter id="tileGlow">
+      <feDropShadow dx="0" dy="0" stdDeviation="22" flood-color="#F5C842" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- background -->
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#glow)"/>
+
+  <!-- corner marks -->
+  <line x1="50" y1="50" x2="100" y2="50" stroke="#6A4820" stroke-width="1.5"/>
+  <line x1="50" y1="50" x2="50" y2="100" stroke="#6A4820" stroke-width="1.5"/>
+  <line x1="974" y1="50" x2="924" y2="50" stroke="#6A4820" stroke-width="1.5"/>
+  <line x1="974" y1="50" x2="974" y2="100" stroke="#6A4820" stroke-width="1.5"/>
+  <line x1="50" y1="974" x2="100" y2="974" stroke="#6A4820" stroke-width="1.5"/>
+  <line x1="50" y1="974" x2="50" y2="924" stroke="#6A4820" stroke-width="1.5"/>
+  <line x1="974" y1="974" x2="924" y2="974" stroke="#6A4820" stroke-width="1.5"/>
+  <line x1="974" y1="974" x2="974" y2="924" stroke="#6A4820" stroke-width="1.5"/>
+
+  <!-- back left tile -->
+  <g filter="url(#shadow)" opacity="0.85">
+    <rect x="230" y="308" width="255" height="318" rx="17" fill="url(#tileF)" stroke="#C8A850" stroke-width="1.5"/>
+    <polygon points="485,308 521,272 521,626 485,626" fill="url(#tileR)"/>
+    <polygon points="230,626 485,626 521,590 266,590" fill="url(#tileB2)"/>
+    <line x1="284" y1="386" x2="431" y2="386" stroke="#3A6A1A" stroke-width="6" stroke-linecap="round"/>
+    <line x1="284" y1="413" x2="431" y2="413" stroke="#3A6A1A" stroke-width="6" stroke-linecap="round"/>
+    <line x1="284" y1="440" x2="431" y2="440" stroke="#3A6A1A" stroke-width="6" stroke-linecap="round"/>
+    <circle cx="358" cy="524" r="45" fill="none" stroke="#3A6A1A" stroke-width="5"/>
+    <circle cx="358" cy="524" r="15" fill="#3A6A1A"/>
+  </g>
+
+  <!-- back right tile -->
+  <g filter="url(#shadow)" opacity="0.85">
+    <rect x="503" y="308" width="255" height="318" rx="17" fill="url(#tileF)" stroke="#C8A850" stroke-width="1.5"/>
+    <polygon points="758,308 794,272 794,626 758,626" fill="url(#tileR)"/>
+    <polygon points="503,626 758,626 794,590 539,590" fill="url(#tileB2)"/>
+    <text x="630" y="521" text-anchor="middle" font-family="serif" font-size="159" font-weight="700" fill="#B83010">二</text>
+  </g>
+
+  <!-- front center tile -->
+  <g filter="url(#tileGlow)">
+  <g filter="url(#shadow)">
+    <rect x="338" y="167" width="300" height="372" rx="21" fill="url(#tileF)" stroke="#D8B860" stroke-width="2.5"/>
+    <polygon points="638,167 686,119 686,539 638,539" fill="url(#tileR)"/>
+    <polygon points="338,539 638,539 686,491 386,491" fill="url(#tileB2)"/>
+    <rect x="350" y="179" width="276" height="348" rx="12" fill="none" stroke="#C8A850" stroke-width="1.5" opacity="0.6"/>
+    <text x="488" y="455" text-anchor="middle" font-family="serif" font-size="249" font-weight="700" fill="#9A1A00">麻</text>
+  </g>
+  </g>
+
+  <!-- logotype -->
+  <text x="512" y="764" text-anchor="middle" font-family="Georgia, serif" font-size="84" font-weight="400" letter-spacing="16" fill="#F5C842">MAHJONG</text>
+
+  <!-- rule -->
+  <line x1="240" y1="786" x2="784" y2="786" stroke="#C4A030" stroke-width="1" opacity="0.5"/>
+
+  <!-- tagline -->
+  <text x="512" y="832" text-anchor="middle" font-family="Georgia, serif" font-size="30" letter-spacing="12" fill="#B09040">SOLITAIRE</text>
+
+</svg>
