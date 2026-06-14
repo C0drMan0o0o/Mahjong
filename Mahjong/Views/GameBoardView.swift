@@ -7,6 +7,7 @@ struct GameBoardView: View {
     private let tileAspect: CGFloat = 68.0 / 52.0
     private let depthRatio: CGFloat = 0.08  // depth as fraction of tile width
     private let layerShift: CGFloat = 2     // px per layer for 3D illusion
+    private let zoomFactor: CGFloat = 1.25  // scale tiles up beyond pure fit
 
     var body: some View {
         GeometryReader { geo in
@@ -73,17 +74,20 @@ struct GameBoardView: View {
         // Fit to available size while keeping tile aspect ratio
         let unitByWidth  = size.width  / colSpan
         let unitByHeight = (size.height / rowSpan) / tileAspect
-        let unitW = min(unitByWidth, unitByHeight)
+        let unitW = min(unitByWidth, unitByHeight) * zoomFactor
         let unitH = unitW * tileAspect
 
         let tileW = unitW * 2 - 1
         let tileH = unitH * 2 - 1
         let depth = max(2, tileW * depthRatio)
 
-        let renderedW = colSpan * unitW
-        let renderedH = rowSpan * unitH
-        let xOffset = max(0, (size.width  - renderedW) / 2)
-        let yOffset = max(0, (size.height - renderedH) / 2)
+        // Center the actual tile content. A tile's frame is (tileW + depth) and
+        // sits centered on its position point; the content spans from the leftmost
+        // tile's left edge to the rightmost tile's right edge.
+        let contentW = CGFloat(maxCol - minCol + 2) * unitW - 1 + depth
+        let contentH = CGFloat(maxRow - minRow + 2) * unitH - 1 + depth
+        let xOffset = (size.width  - contentW) / 2 - unitW
+        let yOffset = (size.height - contentH) / 2 - unitH
 
         return TileLayout(unitW: unitW, unitH: unitH,
                           tileW: tileW, tileH: tileH, depth: depth,
