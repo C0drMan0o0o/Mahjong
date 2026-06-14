@@ -170,8 +170,8 @@ enum LevelGenerator {
     // MARK: - Deck building
 
     /// Returns 36 unique pair identifiers — one entry per pair.
-    /// Each entry will be assigned to exactly two board positions, ensuring
-    /// Tile.matches (exact suit+value equality) identifies them correctly.
+    /// Each entry will be assigned to exactly two board positions.
+    /// Flowers and seasons match any tile of the same suit; all others require exact suit+value.
     nonisolated private static func makeDeckPairs() -> [(TileSuit, Int)] {
         var pairs: [(TileSuit, Int)] = []
 
@@ -183,12 +183,12 @@ enum LevelGenerator {
         for v in 1...4 { pairs.append((.wind, v)) }
         // Dragons 1-3: 3 pairs
         for v in 1...3 { pairs.append((.dragon, v)) }
-        // Flowers: 2 pairs — each pair uses the same value so Tile.matches works.
-        // flower(1)+flower(1) is one pair; flower(2)+flower(2) is the other.
+        // Flowers: 1 pair (any flower matches any flower)
         pairs.append((.flower, 1))
-        pairs.append((.flower, 2))
+        // Seasons: 1 pair (any season matches any season)
+        pairs.append((.season, 1))
 
-        // Total: 27 + 4 + 3 + 2 = 36
+        // Total: 27 + 4 + 3 + 1 + 1 = 36
         precondition(pairs.count == 36)
         return pairs
     }

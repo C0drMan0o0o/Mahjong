@@ -21,6 +21,8 @@ struct Tile: Identifiable, Codable, Equatable, Sendable {
 
     func matches(_ other: Tile) -> Bool {
         guard id != other.id else { return false }
+        if suit == .flower && other.suit == .flower { return true }
+        if suit == .season && other.suit == .season { return true }
         return suit == other.suit && value == other.value
     }
 
