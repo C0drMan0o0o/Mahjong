@@ -1,10 +1,14 @@
 import SwiftUI
 
 @main
-struct MyPlaygroundApp: App {
+struct MahjongApp: App {
     var body: some Scene {
         WindowGroup {
             MainMenuView()
         }
     }
+}
+
+#Preview {
+    MainMenuView()
 }
