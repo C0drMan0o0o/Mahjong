@@ -1,9 +1,12 @@
 import Foundation
 
-struct TilePosition: Codable {
+struct TilePosition: Codable, BoardOccupant {
     let row: Int
     let col: Int
     let layer: Int
+
+    var occupiedCols: ClosedRange<Int> { col...(col + 1) }
+    var occupiedRows: ClosedRange<Int> { row...(row + 1) }
 }
 
 // Single classic turtle layout used for all levels.

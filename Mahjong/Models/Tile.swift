@@ -1,6 +1,6 @@
 import Foundation
 
-struct Tile: Identifiable, Codable, Equatable, Sendable {
+struct Tile: Identifiable, Codable, Equatable, Sendable, BoardOccupant {
     let id: UUID
     var suit: TileSuit
     var value: Int

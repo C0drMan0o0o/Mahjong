@@ -126,45 +126,21 @@ enum LevelGenerator {
         return bestCandidates.randomElement() ?? (free[0], free[1])
     }
 
-    // MARK: - Free tile computation (mirrors GameViewModel.isTileFree exactly)
+    // MARK: - Free tile computation (shared rule: see BoardOccupancy.isFree)
 
     nonisolated private static func computeFreeTiles(
         positions: [TilePosition],
         active: Set<Int>
     ) -> [Int] {
-        active.filter { i in
+        let activePositions = active.map { positions[$0] }
+        return active.filter { i in
             let p = positions[i]
-
-            let blockedAbove = active.contains { j in
-                j != i
-                && positions[j].layer == p.layer + 1
-                && colsOverlap(p, positions[j])
-                && rowsOverlap(p, positions[j])
-            }
-            guard !blockedAbove else { return false }
-
-            let leftBlocked = active.contains { j in
-                j != i
-                && positions[j].layer == p.layer
-                && positions[j].col + 2 == p.col
-                && rowsOverlap(p, positions[j])
-            }
-            let rightBlocked = active.contains { j in
-                j != i
-                && positions[j].layer == p.layer
-                && positions[j].col == p.col + 2
-                && rowsOverlap(p, positions[j])
-            }
-            return !leftBlocked || !rightBlocked
+            return BoardOccupancy.isFree(
+                p,
+                isSame: { $0.row == p.row && $0.col == p.col && $0.layer == p.layer },
+                among: activePositions
+            )
         }
-    }
-
-    nonisolated private static func colsOverlap(_ a: TilePosition, _ b: TilePosition) -> Bool {
-        (a.col...a.col + 1).overlaps(b.col...b.col + 1)
-    }
-
-    nonisolated private static func rowsOverlap(_ a: TilePosition, _ b: TilePosition) -> Bool {
-        (a.row...a.row + 1).overlaps(b.row...b.row + 1)
     }
 
     // MARK: - Deck building

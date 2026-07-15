@@ -270,21 +270,7 @@ final class GameViewModel: ObservableObject {
     func isTileFree(_ tile: Tile) -> Bool {
         guard !tile.isRemoved else { return false }
         let active = tiles.filter { !$0.isRemoved }
-
-        let blockedAbove = active.contains {
-            $0.id != tile.id && $0.layer == tile.layer + 1 && $0.overlapsHorizontally(tile)
-        }
-        if blockedAbove { return false }
-
-        let leftBlocked = active.contains {
-            $0.id != tile.id && $0.layer == tile.layer &&
-            $0.col + 2 == tile.col && $0.occupiedRows.overlaps(tile.occupiedRows)
-        }
-        let rightBlocked = active.contains {
-            $0.id != tile.id && $0.layer == tile.layer &&
-            $0.col == tile.col + 2 && $0.occupiedRows.overlaps(tile.occupiedRows)
-        }
-        return !leftBlocked || !rightBlocked
+        return BoardOccupancy.isFree(tile, isSame: { $0.id == tile.id }, among: active)
     }
 
     // MARK: - Hint
