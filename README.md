@@ -85,7 +85,7 @@ Post-shuffle, adjacent free tiles that already match are separated by a targeted
 | Audio | AVFoundation — `AVAudioPlayer` with PCM WAV data generated at runtime |
 | Persistence | `UserDefaults` via `PersistenceService` (scores, settings, stats) |
 | Haptics | UIKit `UIImpactFeedbackGenerator` / `UINotificationFeedbackGenerator` |
-| Minimum deployment | iOS (SwiftUI + UIKit, check project settings for exact target) |
+| Minimum deployment | iOS 26.5 |
 
 ### Architecture
 
@@ -120,8 +120,8 @@ The app follows a clean MVVM separation. `GameViewModel` owns the canonical `[Ti
 ## Build & Run
 
 ### Requirements
-- Xcode 15 or later
-- iOS 17 SDK (check the project's deployment target in `Mahjong.xcodeproj`)
+- Xcode 26 or later
+- iOS 26.5 SDK (see `IPHONEOS_DEPLOYMENT_TARGET` in `Mahjong.xcodeproj/project.pbxproj` for the exact minimum)
 - A real device or iOS Simulator
 
 ### Steps
