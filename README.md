@@ -95,7 +95,7 @@ Mahjong/
 │   ├── Tile.swift          # Tile value type; occupiedCols/Rows overlap logic
 │   ├── TileType.swift      # TileSuit enum + TileDefinition catalog (symbols, colors)
 │   ├── BoardLayout.swift   # Classic 72-tile layout (4 layers, half-unit grid)
-│   └── GameState.swift     # isTileFree, isDeadlocked, isVictory, BestRecord
+│   └── BoardOccupancy.swift# Shared free-tile rule used by GameViewModel and LevelGenerator
 ├── ViewModels/
 │   ├── GameViewModel.swift # @MainActor orchestrator: selection, hints, undo, shuffle, scoring
 │   └── ShelfViewModel.swift# 4-slot shelf: add, match detection, overflow, undo restore
@@ -189,10 +189,9 @@ Blocked tiles show a dark overlay. Tapping a blocked tile causes it to shake.
 ```
 Mahjong.xcodeproj/     Xcode project file
 Mahjong/
-├── MahjongApp.swift   App entry point (@main)
-├── ContentView.swift  Root view routing to MainMenuView
+├── MahjongApp.swift   App entry point (@main), launches MainMenuView directly
 ├── Assets.xcassets/   App icon (custom mahjong tile SVG) + accent color
-├── Models/            Pure value types: Tile, TileType, BoardLayout, GameState
+├── Models/            Pure value types: Tile, TileType, BoardLayout, BoardOccupancy
 ├── ViewModels/        ObservableObjects: GameViewModel, ShelfViewModel
 ├── Views/             SwiftUI views for every screen and component
 └── Services/          LevelGenerator, PersistenceService, SoundService
