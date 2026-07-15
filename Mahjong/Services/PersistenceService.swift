@@ -1,6 +1,11 @@
 import Foundation
 import os
 
+struct BestRecord: Codable {
+    var bestScore: Int
+    var bestTime: Int?
+}
+
 final class PersistenceService {
     static let shared = PersistenceService()
     private let defaults = UserDefaults.standard
