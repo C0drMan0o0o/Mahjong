@@ -4,13 +4,13 @@ import Foundation
 /// Conformed to by both `Tile` (live gameplay) and `TilePosition` (level generation)
 /// so the free-tile rule below has exactly one implementation.
 protocol BoardOccupant {
-    var layer: Int { get }
-    var col: Int { get }
-    var occupiedCols: ClosedRange<Int> { get }
-    var occupiedRows: ClosedRange<Int> { get }
+    nonisolated var layer: Int { get }
+    nonisolated var col: Int { get }
+    nonisolated var occupiedCols: ClosedRange<Int> { get }
+    nonisolated var occupiedRows: ClosedRange<Int> { get }
 }
 
-enum BoardOccupancy {
+nonisolated enum BoardOccupancy {
     /// A tile is free when nothing sits on the layer directly above it, and at
     /// least one horizontal side (left or right) is unobstructed by a same-layer
     /// neighbor.
