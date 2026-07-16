@@ -6,7 +6,9 @@ A polished Mahjong Solitaire game for iOS built with SwiftUI. Features a shelf-b
 
 ## Screenshots
 
-> _Screenshots coming soon. Run the app in Xcode Simulator targeting any iPhone to preview._
+| Main Menu | Gameplay & Hints | Game Over & Revive |
+|:---:|:---:|:---:|
+| ![Main menu with level select grid](Screenshots/level-select.jpg) | ![Active gameplay with hint tiles glowing](Screenshots/game-start.jpg) | ![Game over overlay with revive and restart options](Screenshots/game-end.jpg) |
 
 ---
 
